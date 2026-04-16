@@ -1,0 +1,36 @@
+# API keys and local secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+
+# Experiment outputs and metrics (not shipped)
+results_paper3/
+results/
+outputs/
+runs/
+wandb/
+*.csv
+*.pth
+*.pt
+*.ckpt
+
+# LLM response cache (may reflect sampled rows; regenerate locally)
+cache/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log
+
+.ipynb_checkpoints/
