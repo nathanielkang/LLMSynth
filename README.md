@@ -61,10 +61,6 @@ Raw tables and LaTeX snippets are written under `--output-dir` (default: `result
 
 If this implementation supports your work, cite the manuscript once the venue of record is fixed (currently targeted at *Expert Systems with Applications*). Do **not** treat this README as the bibliographic record.
 
-## Manuscript vs.\ code
-
-See `MANUSCRIPT_CODE_GAP.txt` in this directory for known differences between this repository and the submitted paper (training budget, noise schedule, ground-truth constraint tables, and so on). The release is a **research implementation**, not a line-by-line reimplementation of every formalism in the PDF.
-
 ## License
 
 Research code provided as-is for reproducibility; see repository license if present.

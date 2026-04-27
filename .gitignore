@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 
+# Internal audit / manuscript-alignment notes (never ship on public code remote)
+MANUSCRIPT_CODE_GAP.txt
+*_CODE_GAP.txt
+
 # Python
 __pycache__/
 *.py[cod]
