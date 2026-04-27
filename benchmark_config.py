@@ -81,10 +81,10 @@ TABOVER_METHODS = ["None", "RandomOS", "SMOTER", "SMOGN",
                    "TabDDPM", "TabOversample"]
 
 # ======================================================================
-# Paper 3 (LLMSynth) Specific
+# Paper 3 (LLMSynth) Specific (ESWA manuscript benchmarks)
 # ======================================================================
 
-LLMSYNTH_DATASETS = ["adult", "credit", "insurance"]
+LLMSYNTH_DATASETS = ["adult", "credit", "heart", "diabetes", "wine"]
 LLMSYNTH_METHODS = ["LLMSynth", "TabDDPM", "ManualConstraints", "PostHocRepair"]
-LLMSYNTH_LLM_MODEL = "claude-sonnet-4-20250514"
-LLMSYNTH_VALIDATION_THRESHOLD = 0.3  # discard LLM constraints with >30% violation
+LLMSYNTH_LLM_MODEL = "claude-3-5-sonnet-20241022"
+LLMSYNTH_VALIDATION_THRESHOLD = 0.05  # manuscript tau (hallucination filter)

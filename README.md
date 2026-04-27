@@ -1,6 +1,6 @@
 ﻿# LLMSynth
 
-Research implementation of **LLMSynth**: LLM-augmented semantic constraint discovery paired with a diffusion-based tabular synthesizer (TabDDPM-style backbone). This repository contains **source code only**—no precomputed results, checkpoints, or bundled datasets.
+Research implementation of **LLMSynth**: LLM-augmented semantic constraint discovery paired with a diffusion-based tabular synthesizer (TabDDPM-style backbone).
 
 ## What is included
 
@@ -27,6 +27,7 @@ pip install -r requirements.txt
 
 1. Copy `.env.example` to `.env`.
 2. Set `ANTHROPIC_API_KEY` for live LLM calls. For a **dry run without API access**, use `--use-mock` (see below).
+3. Optional: set `LLMSYNTH_ANTHROPIC_MODEL` to the exact Anthropic model id your key should use (defaults to the Claude 3.5 Sonnet snapshot named in the manuscript).
 
 Do **not** commit `.env`.
 
@@ -58,7 +59,11 @@ Raw tables and LaTeX snippets are written under `--output-dir` (default: `result
 
 ## Citation
 
-If you use this code, please cite the associated paper (Neurocomputing / preprint as applicable).
+If this implementation supports your work, cite the manuscript once the venue of record is fixed (currently targeted at *Expert Systems with Applications*). Do **not** treat this README as the bibliographic record.
+
+## Manuscript vs.\ code
+
+See `MANUSCRIPT_CODE_GAP.txt` in this directory for known differences between this repository and the submitted paper (training budget, noise schedule, ground-truth constraint tables, and so on). The release is a **research implementation**, not a line-by-line reimplementation of every formalism in the PDF.
 
 ## License
 

@@ -2,7 +2,7 @@
 llm_discovery.py - LLM-augmented constraint discovery using Anthropic Claude.
 
 Core function:
-    discover_constraints(schema_info, sample_df, model)
+    discover_constraints(df, cat_columns=..., num_columns=..., model=...)
         -> list[Constraint]
 
 Also provides:
@@ -53,7 +53,8 @@ def _load_api_key():
         for env_path in env_candidates:
             if env_path.exists():
                 load_dotenv(env_path)
-                print(f"[LLM Discovery] Loaded .env from {env_path}")
+                # Do not log absolute paths (machine/username leakage).
+                print("[LLM Discovery] Loaded credentials from a local .env file")
                 loaded = True
                 break
 
@@ -336,14 +337,22 @@ def _extract_json_from_text(text: str) -> dict:
 # Main discovery function
 # ---------------------------------------------------------------------------
 
+def _default_anthropic_model() -> str:
+    """Primary model string; override with env LLMSYNTH_ANTHROPIC_MODEL."""
+    return os.environ.get(
+        "LLMSYNTH_ANTHROPIC_MODEL",
+        "claude-3-5-sonnet-20241022",
+    )
+
+
 def discover_constraints(
     df: pd.DataFrame,
     cat_columns: list = None,
     num_columns: list = None,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = None,
     use_cache: bool = True,
     validate: bool = True,
-    violation_threshold: float = 0.3,
+    violation_threshold: float = 0.05,
     max_retries: int = 3,
     retry_delay: float = 5.0,
 ) -> list:
@@ -358,15 +367,16 @@ def discover_constraints(
         Categorical column names.
     num_columns : list, optional
         Numeric column names.
-    model : str
-        Claude model to use.
+    model : str, optional
+        Claude model id. Defaults to env ``LLMSYNTH_ANTHROPIC_MODEL`` or
+        ``claude-3-5-sonnet-20241022`` (matches manuscript ``Claude 3.5 Sonnet``).
     use_cache : bool
         Cache LLM responses to avoid redundant API calls.
     validate : bool
         If True, validate discovered constraints against the data
         and discard those with violation rate > violation_threshold.
     violation_threshold : float
-        Max allowed violation rate for a constraint to be kept.
+        Max allowed violation rate for a constraint to be kept (paper $\tau=0.05$).
     max_retries : int
         Number of retry attempts on API failure.
     retry_delay : float
@@ -376,9 +386,12 @@ def discover_constraints(
     -------
     list of Constraint objects.
     """
+    if model is None:
+        model = _default_anthropic_model()
+
     # Build schema info and sample
     schema_info = _build_schema_info(df, cat_columns, num_columns)
-    sample_table = _build_sample_table(df, n_rows=12)
+    sample_table = _build_sample_table(df, n_rows=15)
 
     # Check cache
     cache_key = _compute_cache_key(schema_info, sample_table)
@@ -469,7 +482,7 @@ def discover_constraints(
 
 def _validate_constraints(constraints: list,
                           df: pd.DataFrame,
-                          threshold: float = 0.3) -> list:
+                          threshold: float = 0.05) -> list:
     """
     Validate constraints against the data.
     Discard constraints with violation rate > threshold.

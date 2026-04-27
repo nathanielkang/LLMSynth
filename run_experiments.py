@@ -9,7 +9,7 @@ Orchestrates:
       1. Load data and ground-truth constraints
       2. Run LLM constraint discovery (or use cached / mock results)
       3. Compute constraint discovery precision / recall
-      4. For each method (LLMSynth, TabDDPM, CTGAN, ManualConstraints, PostHocRepair):
+      4. For each method (LLMSynth, TabDDPM, ManualConstraints, PostHocRepair):
         For each seed:
           a. Train synthesizer
           b. Generate synthetic data (same size as training)
@@ -99,10 +99,10 @@ def _create_synthesizer(method_name, epochs, verbose):
     """Create a synthesizer instance for the given method."""
     common_kwargs = dict(
         hidden_dim=512,
-        n_layers=4,
+        n_layers=3,
         n_timesteps=1000,
         epochs=epochs,
-        batch_size=256,
+        batch_size=4096,
         lr=1e-3,
         verbose=verbose,
     )
@@ -149,10 +149,10 @@ def _run_discovery(dataset, use_mock=False, use_cache=True):
             df=dataset["df_train"],
             cat_columns=dataset["cat_columns"],
             num_columns=dataset["num_columns"],
-            model="claude-sonnet-4-20250514",
+            model=None,
             use_cache=use_cache,
             validate=True,
-            violation_threshold=0.3,
+            violation_threshold=0.05,
         )
         if not discovered:
             log.warning(f"[Discovery] No constraints discovered for {ds_name} "
@@ -762,4 +762,4 @@ if __name__ == "__main__":
     elapsed = time.time() - t_start
 
     log.info(f"\nAll experiments completed in {elapsed/60:.1f} minutes.")
-    log.info(f"Results directory: {os.path.abspath(args.output_dir)}")
+    log.info(f"Results directory (relative): {args.output_dir}")

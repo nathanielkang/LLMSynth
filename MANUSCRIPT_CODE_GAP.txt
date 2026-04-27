@@ -1,0 +1,75 @@
+LLMSynth — manuscript vs. public code (honesty checklist)
+==========================================================
+Scope: 12_ESWA_LLMSynth/2_Code vs. 1_Manuscript/main.tex (ESWA submission).
+Last reviewed: 2026-04-27.
+
+A. Privacy / deanonymization (public GitHub)
+---------------------------------------------
+- README must not contain author names, personal e-mail, ORCID, or university
+  strings (fixed in this pass).
+- llm_discovery no longer prints absolute .env paths (avoids username/machine
+  paths in logs).
+- run_experiments logs output directory as a relative path only.
+- Local .git/config may still contain user.name/user.email on your machine;
+  that file is not pushed as repository *content*, but commit metadata on
+  GitHub still carries committer identity — use a neutral GitHub account or
+  accept that for a public repo.
+
+B. Ground-truth Phi_GT vs. datasets.py
+--------------------------------------
+The paper’s Table (tab:gt_breakdown) lists typed counts (range / FD /
+cross-column DC) per dataset. The in-repo Python ground-truth lists are a
+**separate engineering artifact**: they are meant to be semantically reasonable
+and to stress the synthesizer, but they are **not** guaranteed to match every
+cell of that LaTeX table (e.g., GermanCredit in code is largely unary ranges
+plus hints; the paper row shows additional FD/DC structure). Treat the PDF as
+the scientific claim for Phi_GT composition until the tables and code are
+reconciled in a dedicated pass.
+
+C. Training budget and schedule
+-------------------------------
+- Manuscript: 100,000 optimizer steps, batch size 4096, cosine noise schedule.
+- Code: epoch loop with linear beta schedule; default --epochs (200) is a
+  **shortcut** vs. 100k steps. Align training length explicitly before claiming
+  numerical reproduction of paper tables.
+
+D. Validation sample for LLM constraints
+----------------------------------------
+- Manuscript: independent n_v=500 held-out validation split for v(phi).
+- Code: validation uses the same DataFrame passed into discover_constraints
+  (typically full df_train), not a dedicated 500-row holdout split.
+
+E. Soft-constraint “gradient guidance” in diffusion
+---------------------------------------------------
+- Manuscript: classifier-guidance-style score with scale s=0.5 on soft rules.
+- Code: reverse process uses late-stage **clamping** of standardized ranges in
+  TabularDiffusionCore.constrained_sample; it does not implement the full
+  gradient-based soft penalty described in the theory section. Post-fit
+  enforcement handles FDs / cross-column rules in data space.
+
+F. PostHocRepair
+----------------
+- Manuscript: up to 100 resampling attempts per tuple after unconstrained
+  generation.
+- Code: trains VanillaTabDDPM, samples once, then applies repair operators;
+  cross-column repair uses a small number of column resamples, not the full
+  per-tuple 100-attempt budget.
+
+G. Optional / legacy paths
+---------------------------
+- datasets.py still includes an **Insurance** loader (not in the five ESWA
+  benchmarks). Harmless if unused; benchmark_config LLMSYNTH_DATASETS now lists
+  only the five paper datasets.
+- CTGANSynthesizer exists but is not in ALL_METHODS in run_experiments.py
+  (docstrings still mention CTGAN in places).
+
+H. LLM model string
+-------------------
+- Default API model is claude-3-5-sonnet-20241022 (Anthropic id for “3.5
+  Sonnet”). Override with environment variable LLMSYNTH_ANTHROPIC_MODEL if
+  your account routes to a successor snapshot.
+
+I. Mock mode
+------------
+- --use-mock uses hand-written constraints for smoke tests; numbers from mock
+  runs must never be presented as paper results.

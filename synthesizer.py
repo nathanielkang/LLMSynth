@@ -215,8 +215,8 @@ class TabularDiffusionCore(nn.Module):
                            verbose=False):
         """Constraint-guided DDPM reverse sampling (late-stage guidance).
 
-        Applies value-range clamping only in the LAST 50 denoising
-        steps (out of 1000), preserving the learned distribution
+        Applies value-range clamping only in the last T_g denoising
+        steps (default 200 of 1000), preserving the learned distribution
         during early/mid denoising while steering toward constraint
         satisfaction in the final steps.  This avoids compounding
         distortion from clamping at every step.
@@ -236,9 +236,8 @@ class TabularDiffusionCore(nn.Module):
         if range_constraints_scaled is None:
             range_constraints_scaled = []
 
-        # Only guide in the last 5% of denoising steps to preserve
-        # the learned distribution during early/mid denoising.
-        guidance_steps = 50
+        # Late-stage guidance length T_g (manuscript: 200 of T=1000 steps).
+        guidance_steps = 200
 
         x = torch.randn(n_samples, self.input_dim)
 
@@ -383,8 +382,8 @@ class VanillaTabDDPM(BaseSynthesizer):
     Sampling: standard reverse diffusion.
     """
 
-    def __init__(self, hidden_dim=512, n_layers=4, n_timesteps=1000,
-                 epochs=200, batch_size=256, lr=1e-3, verbose=True):
+    def __init__(self, hidden_dim=512, n_layers=3, n_timesteps=1000,
+                 epochs=200, batch_size=4096, lr=1e-3, verbose=True):
         super().__init__(name="TabDDPM")
         self.hidden_dim = hidden_dim
         self.n_layers = n_layers
@@ -440,14 +439,14 @@ class ConstraintGuidedDiffusion(BaseSynthesizer):
 
     Training: standard TabDDPM (no constraint awareness in training).
     Sampling:
-        1. Late-stage guided reverse diffusion (clamp only last 50 steps)
+        1. Late-stage guided reverse diffusion (range clamp in last T_g steps)
         2. Post-hoc value-range clamping in data space
         3. FD enforcement: nearest valid value (numeric) or mode (categorical)
-        4. Cross-column rules: rejection resampling (max 3 retries)
+        4. Cross-column rules: rejection resampling (max 3 retries; see gap doc)
     """
 
-    def __init__(self, hidden_dim=512, n_layers=4, n_timesteps=1000,
-                 epochs=200, batch_size=256, lr=1e-3, verbose=True,
+    def __init__(self, hidden_dim=512, n_layers=3, n_timesteps=1000,
+                 epochs=200, batch_size=4096, lr=1e-3, verbose=True,
                  max_rejection_retries=3):
         super().__init__(name="LLMSynth")
         self.hidden_dim = hidden_dim
@@ -507,7 +506,7 @@ class ConstraintGuidedDiffusion(BaseSynthesizer):
         self._scaled_ranges = self._constraints_to_scaled(range_constraints)
 
         # Step 1: LATE-STAGE guided reverse diffusion -- range constraints
-        # are enforced only in the last 50 denoising steps, preserving
+        # are enforced only in the last T_g denoising steps, preserving
         # distribution quality while steering toward constraints.
         X_synth = self._model.constrained_sample(
             n_samples,
@@ -718,8 +717,8 @@ class PostHocRepair(BaseSynthesizer):
         - Cross-column: resample the violating column from training dist
     """
 
-    def __init__(self, hidden_dim=512, n_layers=4, n_timesteps=1000,
-                 epochs=200, batch_size=256, lr=1e-3, verbose=True):
+    def __init__(self, hidden_dim=512, n_layers=3, n_timesteps=1000,
+                 epochs=200, batch_size=4096, lr=1e-3, verbose=True):
         super().__init__(name="PostHocRepair")
         self.hidden_dim = hidden_dim
         self.n_layers = n_layers
