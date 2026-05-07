@@ -59,7 +59,18 @@ Raw tables and LaTeX snippets are written under `--output-dir` (default: `result
 
 ## Citation
 
-If this implementation supports your work, cite the manuscript once the venue of record is fixed (currently targeted at *Expert Systems with Applications*). Do **not** treat this README as the bibliographic record.
+If this implementation supports your work, cite the **peer-reviewed article** using the publisher’s official bibliographic record (authors, title, venue, volume/issue, pages, DOI) once that reference exists. **Do not** treat this README as the bibliographic record, and **do not** infer venue or citation metadata from this repository.
+
+## Manuscript ↔ code parity (checklist)
+
+Keep this list in sync when the paper’s experiments or tables change.
+
+| Area | Current repo state | Typical follow-up |
+|------|-------------------|-------------------|
+| **Benchmark datasets** | Defaults cover five tasks (`adult`, `credit`, `heart`, `diabetes`, `wine`) via `benchmark_config.LLMSYNTH_DATASETS`, `datasets._CANONICAL_DATASETS`, and `run_experiments.py` CLI defaults. | If the manuscript adds benchmarks (e.g. banking / credit-default / regression housing splits), add loaders plus ground-truth constraint specs in `datasets.py`, then extend the lists above. |
+| **Synthesis baselines** | Runner registers `LLMSynth`, `TabDDPM`, `ManualConstraints`, `PostHocRepair` (`run_experiments.ALL_METHODS`). | Any extra generators named in the paper (e.g. score-based or LLM tabular baselines) need adapters in `synthesizer.py` and wiring in `_create_synthesizer`. |
+| **Discovery baselines** | LLM discovery + optional mock/cache; no TANE/Hydra drivers in-tree. | If the discovery table must be reproduced end-to-end, add baseline pipelines or document external tooling + how outputs feed `metrics.constraint_discovery_quality`. |
+| **Validation threshold** | `LLMSYNTH_VALIDATION_THRESHOLD` / `violation_threshold=0.05` should match the paper’s single-threshold statistical gate (tau). | After any TeX change to tau or validation logic, update `benchmark_config.py`, `llm_discovery.py`, and call sites in `run_experiments.py`. |
 
 ## License
 

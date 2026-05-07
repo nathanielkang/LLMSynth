@@ -81,7 +81,7 @@ TABOVER_METHODS = ["None", "RandomOS", "SMOTER", "SMOGN",
                    "TabDDPM", "TabOversample"]
 
 # ======================================================================
-# Paper 3 (LLMSynth) Specific (ESWA manuscript benchmarks)
+# Paper 3 (LLMSynth) Specific — benchmark lists (keep aligned with manuscript experiments)
 # ======================================================================
 
 LLMSYNTH_DATASETS = ["adult", "credit", "heart", "diabetes", "wine"]
