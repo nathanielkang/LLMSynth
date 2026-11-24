@@ -2,9 +2,11 @@
 # Run full RelDDPM + TabDiff grid on a GCP VM with persistent logging.
 set -euo pipefail
 
-PROJECT="${GCP_PROJECT:-knu-fog-experiments}"
+: "${GCP_PROJECT:?Set GCP_PROJECT to your GCP project id}"
+: "${GCP_INSTANCE:?Set GCP_INSTANCE to your VM name}"
+PROJECT="$GCP_PROJECT"
 ZONE="${GCP_ZONE:-us-central1-a}"
-INSTANCE="${GCP_INSTANCE:-llmsynth-gpu}"
+INSTANCE="$GCP_INSTANCE"
 REMOTE_DIR="${REMOTE_DIR:-~/llmsynth/2_Code}"
 OUTPUT_DIR="${OUTPUT_DIR:-results_gcp_relddpm_tabdiff_$(date +%Y%m%d_%H%M%S)}"
 EPOCHS="${EPOCHS:-200}"

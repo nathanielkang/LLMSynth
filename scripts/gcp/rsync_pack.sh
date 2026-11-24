@@ -2,9 +2,11 @@
 # Sync LLMSynth 2_Code pack to GCP VM (code only — no .env).
 set -euo pipefail
 
-PROJECT="${GCP_PROJECT:-knu-fog-experiments}"
+: "${GCP_PROJECT:?Set GCP_PROJECT to your GCP project id}"
+: "${GCP_INSTANCE:?Set GCP_INSTANCE to your VM name}"
+PROJECT="$GCP_PROJECT"
 ZONE="${GCP_ZONE:-us-central1-a}"
-INSTANCE="${GCP_INSTANCE:-llmsynth-gpu}"
+INSTANCE="$GCP_INSTANCE"
 LOCAL_PACK="${LOCAL_PACK:-$(cd "$(dirname "$0")/../.." && pwd)}"
 REMOTE_DIR="${REMOTE_DIR:-~/llmsynth/2_Code}"
 
