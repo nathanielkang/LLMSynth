@@ -138,6 +138,20 @@ def ml_utility(synthetic_df: pd.DataFrame,
     X_test = X_test.fillna(0).values.astype(np.float32)
 
     if task == "classification":
+        # Synthetic targets from continuous diffusion may be float-valued;
+        # snap to nearest observed training label for stable utility.
+        y_train_num = pd.to_numeric(y_train, errors="coerce")
+        y_test_num = pd.to_numeric(y_test, errors="coerce")
+        if y_train_num.notna().mean() > 0.9 and y_test_num.notna().mean() > 0.9:
+            classes = np.sort(y_test_num.dropna().unique())
+            if len(classes) >= 2 and len(classes) <= 20:
+                # Map each synthetic label to nearest real class
+                yt = y_train_num.fillna(classes[0]).values
+                nearest = classes[
+                    np.abs(yt.reshape(-1, 1) - classes.reshape(1, -1)).argmin(axis=1)
+                ]
+                y_train = pd.Series(nearest, index=y_train.index)
+                y_test = y_test_num
         return _classification_utility(X_train, y_train, X_test, y_test)
     else:
         return _regression_utility(X_train, y_train, X_test, y_test)
@@ -149,13 +163,12 @@ def _classification_utility(X_train, y_train, X_test, y_test):
 
     # Encode target
     le = LabelEncoder()
-    all_labels = pd.concat([
-        pd.Series(y_train).astype(str),
-        pd.Series(y_test).astype(str)
-    ]).unique()
+    y_train_s = pd.Series(y_train).astype(str).str.strip()
+    y_test_s = pd.Series(y_test).astype(str).str.strip()
+    all_labels = pd.concat([y_train_s, y_test_s]).unique()
     le.fit(all_labels)
-    y_train_enc = le.transform(pd.Series(y_train).astype(str))
-    y_test_enc = le.transform(pd.Series(y_test).astype(str))
+    y_train_enc = le.transform(y_train_s)
+    y_test_enc = le.transform(y_test_s)
 
     try:
         from catboost import CatBoostClassifier

@@ -926,6 +926,246 @@ def _wine_constraints(df):
 
 
 # ---------------------------------------------------------------------------
+# Bank Marketing Dataset
+# ---------------------------------------------------------------------------
+
+def load_bank():
+    """
+    Load the Bank Marketing dataset (UCI / OpenML).
+
+    Task: binary classification (term deposit subscription)
+    """
+    print("[datasets] Loading Bank Marketing dataset from OpenML ...")
+    data = None
+    for _name in ["bank-marketing", "bank"]:
+        try:
+            data = fetch_openml(_name, version=1, as_frame=True, parser="auto")
+            break
+        except Exception:
+            continue
+    if data is None:
+        try:
+            data = fetch_openml(data_id=1461, as_frame=True, parser="auto")
+        except Exception as e:
+            raise RuntimeError(f"Could not load Bank Marketing dataset: {e}")
+
+    df = data.data.copy()
+    df["subscribe"] = data.target.copy()
+    df.columns = [c.strip().replace("-", "_").replace(" ", "_") for c in df.columns]
+
+    cat_cols = df.select_dtypes(include=["category", "object"]).columns.tolist()
+    num_cols = [c for c in df.columns if c not in cat_cols]
+    for c in cat_cols:
+        df[c] = df[c].astype(str).str.strip()
+    for c in num_cols:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.dropna().reset_index(drop=True)
+
+    df_train, df_test = train_test_split(
+        df, test_size=0.3, random_state=42, stratify=df["subscribe"]
+    )
+    df_train = df_train.reset_index(drop=True)
+    df_test = df_test.reset_index(drop=True)
+
+    constraints = _bank_constraints(df)
+
+    print(f"  -> Bank: train={len(df_train)}, test={len(df_test)}, "
+          f"cols={len(df.columns)}, constraints={len(constraints)}")
+
+    return {
+        "name": "Bank",
+        "task": "classification",
+        "target_col": "subscribe",
+        "df_train": df_train,
+        "df_test": df_test,
+        "columns": list(df.columns),
+        "cat_columns": [c for c in cat_cols if c in df.columns],
+        "num_columns": [c for c in num_cols if c in df.columns],
+        "ground_truth_constraints": constraints,
+    }
+
+
+def _bank_constraints(df):
+    cols = list(df.columns)
+    constraints = []
+    age_col = _find_col(cols, ["age"])
+    if age_col:
+        constraints.append(ValueRangeConstraint("age_adult", age_col, min_val=18, max_val=95))
+    dur_col = _find_col(cols, ["duration"])
+    if dur_col:
+        constraints.append(ValueRangeConstraint("duration_positive", dur_col, min_val=0))
+    bal_col = _find_col(cols, ["balance", "bal"])
+    if bal_col:
+        constraints.append(ValueRangeConstraint("balance_min", bal_col, min_val=-10000))
+    pdays_col = _find_col(cols, ["pdays"])
+    if pdays_col:
+        constraints.append(ValueRangeConstraint("pdays_min", pdays_col, min_val=-1))
+    if dur_col:
+        constraints.append(DistributionHint("duration_dist", dur_col, distribution="right_skewed"))
+    return constraints
+
+
+# ---------------------------------------------------------------------------
+# Default of Credit Card Clients
+# ---------------------------------------------------------------------------
+
+def load_default_credit():
+    """
+    Load the Default of Credit Card Clients dataset (UCI / OpenML).
+
+    Task: binary classification (default payment next month)
+    """
+    print("[datasets] Loading Default Credit dataset from OpenML ...")
+    data = None
+    for _name in ["default-of-credit-card-clients", "DefaultOfCreditCardClients"]:
+        try:
+            data = fetch_openml(_name, version=1, as_frame=True, parser="auto")
+            break
+        except Exception:
+            continue
+    if data is None:
+        try:
+            data = fetch_openml(data_id=42477, as_frame=True, parser="auto")
+        except Exception as e:
+            raise RuntimeError(f"Could not load Default Credit dataset: {e}")
+
+    df = data.data.copy()
+    target = data.target.copy()
+    df.columns = [c.strip().replace("-", "_").replace(" ", "_") for c in df.columns]
+
+    # Target column naming varies across OpenML versions.
+    target_col = _find_col(list(df.columns) + list(target.name if hasattr(target, 'name') else []),
+                           ["default_payment", "defaultpaymentnextmonth", "y"])
+    if target_col and target_col in df.columns:
+        df["default"] = df[target_col]
+    else:
+        df["default"] = target.values
+
+    if "default" not in df.columns:
+        df["default"] = target.values
+
+    cat_cols = df.select_dtypes(include=["category", "object"]).columns.tolist()
+    num_cols = [c for c in df.columns if c not in cat_cols and c != "default"]
+    for c in cat_cols:
+        df[c] = df[c].astype(str).str.strip()
+    for c in num_cols:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.dropna().reset_index(drop=True)
+
+    df_train, df_test = train_test_split(
+        df, test_size=0.3, random_state=42, stratify=df["default"]
+    )
+    df_train = df_train.reset_index(drop=True)
+    df_test = df_test.reset_index(drop=True)
+
+    constraints = _default_credit_constraints(df)
+
+    print(f"  -> DefaultCredit: train={len(df_train)}, test={len(df_test)}, "
+          f"cols={len(df.columns)}, constraints={len(constraints)}")
+
+    return {
+        "name": "DefaultCredit",
+        "task": "classification",
+        "target_col": "default",
+        "df_train": df_train,
+        "df_test": df_test,
+        "columns": list(df.columns),
+        "cat_columns": [c for c in cat_cols if c in df.columns],
+        "num_columns": [c for c in num_cols if c in df.columns],
+        "ground_truth_constraints": constraints,
+    }
+
+
+def _default_credit_constraints(df):
+    cols = list(df.columns)
+    constraints = []
+    limit_col = _find_col(cols, ["limit_bal", "limitbal", "x1"])
+    if limit_col:
+        constraints.append(ValueRangeConstraint("limit_positive", limit_col, min_val=0))
+    age_col = _find_col(cols, ["age", "x5"])
+    if age_col:
+        constraints.append(ValueRangeConstraint("age_range", age_col, min_val=21, max_val=80))
+    bill_cols = [c for c in cols if "bill" in c.lower() or c.startswith("x12")]
+    for col in bill_cols[:6]:
+        constraints.append(ValueRangeConstraint(f"{col}_min", col, min_val=-200000))
+    pay_cols = [c for c in cols if "pay_amt" in c.lower() or "payamt" in c.lower()]
+    for col in pay_cols[:6]:
+        constraints.append(ValueRangeConstraint(f"{col}_min", col, min_val=0))
+    sex_col = _find_col(cols, ["sex", "x2"])
+    if sex_col:
+        constraints.append(DistributionHint("sex_dist", sex_col, distribution="categorical"))
+    return constraints
+
+
+# ---------------------------------------------------------------------------
+# California Housing Dataset
+# ---------------------------------------------------------------------------
+
+def load_california_housing():
+    """
+    Load the California Housing dataset (sklearn / OpenML).
+
+    Task: regression (median house value)
+    """
+    print("[datasets] Loading California Housing dataset ...")
+    from sklearn.datasets import fetch_california_housing
+
+    data = fetch_california_housing(as_frame=True)
+    df = data.frame.copy()
+    df.columns = [c.strip().replace("-", "_") for c in df.columns]
+
+    cat_cols = []
+    num_cols = list(df.columns)
+
+    df_train, df_test = train_test_split(
+        df, test_size=0.3, random_state=42
+    )
+    df_train = df_train.reset_index(drop=True)
+    df_test = df_test.reset_index(drop=True)
+
+    constraints = _california_housing_constraints(df)
+
+    print(f"  -> CaliforniaHousing: train={len(df_train)}, test={len(df_test)}, "
+          f"cols={len(df.columns)}, constraints={len(constraints)}")
+
+    return {
+        "name": "CaliforniaHousing",
+        "task": "regression",
+        "target_col": "MedHouseVal",
+        "df_train": df_train,
+        "df_test": df_test,
+        "columns": list(df.columns),
+        "cat_columns": cat_cols,
+        "num_columns": num_cols,
+        "ground_truth_constraints": constraints,
+    }
+
+
+def _california_housing_constraints(df):
+    constraints = []
+    if "MedInc" in df.columns:
+        constraints.append(ValueRangeConstraint("medinc_positive", "MedInc", min_val=0.0))
+    if "HouseAge" in df.columns:
+        constraints.append(ValueRangeConstraint("houseage_range", "HouseAge", min_val=0, max_val=52))
+    if "AveRooms" in df.columns:
+        constraints.append(ValueRangeConstraint("averooms_positive", "AveRooms", min_val=0.5))
+    if "AveBedrms" in df.columns:
+        constraints.append(ValueRangeConstraint("avebedrms_positive", "AveBedrms", min_val=0.1))
+    if "Population" in df.columns:
+        constraints.append(ValueRangeConstraint("population_positive", "Population", min_val=0))
+    if "AveOccup" in df.columns:
+        constraints.append(ValueRangeConstraint("aveoccup_positive", "AveOccup", min_val=0.5))
+    if "MedHouseVal" in df.columns:
+        constraints.append(ValueRangeConstraint(
+            "medhouseval_range", "MedHouseVal",
+            min_val=float(df["MedHouseVal"].min()) - 0.5,
+            max_val=float(df["MedHouseVal"].max()) + 0.5,
+        ))
+    constraints.append(DistributionHint("medinc_dist", "MedInc", distribution="right_skewed"))
+    return constraints
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -939,10 +1179,19 @@ _DATASET_LOADERS = {
     "diabetes": load_diabetes,
     "wine": load_wine,
     "wine_quality": load_wine,
+    "bank": load_bank,
+    "bank_marketing": load_bank,
+    "default": load_default_credit,
+    "default_credit": load_default_credit,
+    "california_housing": load_california_housing,
+    "california": load_california_housing,
 }
 
 # Canonical list (no aliases) for iterating all unique datasets
-_CANONICAL_DATASETS = ["adult", "credit", "heart", "diabetes", "wine"]
+_CANONICAL_DATASETS = [
+    "adult", "credit", "heart", "diabetes", "wine",
+    "bank", "default", "california_housing",
+]
 
 
 def get_dataset(name: str) -> dict:

@@ -84,7 +84,13 @@ TABOVER_METHODS = ["None", "RandomOS", "SMOTER", "SMOGN",
 # Paper 3 (LLMSynth) Specific — benchmark lists (keep aligned with manuscript experiments)
 # ======================================================================
 
-LLMSYNTH_DATASETS = ["adult", "credit", "heart", "diabetes", "wine"]
-LLMSYNTH_METHODS = ["LLMSynth", "TabDDPM", "ManualConstraints", "PostHocRepair"]
+LLMSYNTH_DATASETS = [
+    "adult", "credit", "heart", "diabetes", "wine",
+    "bank", "default", "california_housing",
+]
+LLMSYNTH_METHODS = [
+    "LLMSynth", "TabDDPM", "RelDDPM", "TabDiff",
+    "ManualConstraints", "PostHocRepair",
+]
 LLMSYNTH_LLM_MODEL = "claude-3-5-sonnet-20241022"
 LLMSYNTH_VALIDATION_THRESHOLD = 0.05  # manuscript tau (hallucination filter)

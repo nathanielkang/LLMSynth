@@ -18,6 +18,10 @@ env/
 
 # Experiment outputs and metrics (not shipped)
 results_paper3/
+results_smoke/
+results_smoke_harness/
+results_nap*/
+results_relddpm*/
 results/
 outputs/
 runs/
@@ -29,6 +33,11 @@ wandb/
 
 # LLM response cache (may reflect sampled rows; regenerate locally)
 cache/
+
+# Third-party clones (fetch via third_party/README.md)
+third_party/RelDDPM/
+third_party/TabDiff/
+!third_party/README.md
 
 # IDE / OS
 .idea/

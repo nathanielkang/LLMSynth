@@ -60,6 +60,8 @@ from synthesizer import (
     CTGANSynthesizer,
     get_synthesizer,
 )
+from baselines.relddpm_adapter import RelDDPMSynthesizer
+from baselines.tabdiff_adapter import TabDiffSynthesizer
 from metrics import (
     violation_rate,
     ml_utility,
@@ -90,6 +92,8 @@ log = logging.getLogger("run_experiments")
 ALL_METHODS = [
     "LLMSynth",
     "TabDDPM",
+    "RelDDPM",
+    "TabDiff",
     "ManualConstraints",
     "PostHocRepair",
 ]
@@ -108,7 +112,13 @@ def _create_synthesizer(method_name, epochs, verbose):
     )
 
     if method_name == "LLMSynth":
-        return ConstraintGuidedDiffusion(**common_kwargs)
+        kwargs = dict(common_kwargs)
+        kwargs.update(
+            hidden_dim=768,
+            n_layers=4,
+            max_rejection_retries=25,
+        )
+        return ConstraintGuidedDiffusion(**kwargs)
     elif method_name == "TabDDPM":
         return VanillaTabDDPM(**common_kwargs)
     elif method_name == "ManualConstraints":
@@ -117,6 +127,23 @@ def _create_synthesizer(method_name, epochs, verbose):
         return synth
     elif method_name == "PostHocRepair":
         return PostHocRepair(**common_kwargs)
+    elif method_name == "RelDDPM":
+        return RelDDPMSynthesizer(
+            epochs=epochs,
+            batch_size=common_kwargs["batch_size"],
+            verbose=verbose,
+            hidden_dim=[256, 512, 512, 256],
+        )
+    elif method_name == "TabDiff":
+        return TabDiffSynthesizer(
+            hidden_dim=256,
+            n_layers=3,
+            n_timesteps=common_kwargs["n_timesteps"],
+            epochs=epochs,
+            batch_size=common_kwargs["batch_size"],
+            lr=common_kwargs["lr"],
+            verbose=verbose,
+        )
     elif method_name == "CTGAN":
         return CTGANSynthesizer(
             epochs=epochs,
@@ -218,12 +245,14 @@ def run_single(dataset, method_name, constraints_to_use,
 
     # Fit
     try:
-        synth.fit(
-            df_train,
+        fit_kwargs = dict(
             cat_columns=cat_columns,
             num_columns=num_columns,
             target_col=target_col,
         )
+        if method_name == "RelDDPM":
+            fit_kwargs["constraints"] = constraints_to_use
+        synth.fit(df_train, **fit_kwargs)
     except Exception as e:
         return _error_result(ds_name, method_name, seed,
                              f"fit() failed: {e}")
@@ -299,7 +328,10 @@ def run_experiments(args):
 
     # --- Datasets ---
     # Canonical list avoids duplicates (credit and german_credit are aliases)
-    _CANONICAL_DATASETS = ["adult", "credit", "heart", "diabetes", "wine"]
+    _CANONICAL_DATASETS = [
+        "adult", "credit", "heart", "diabetes", "wine",
+        "bank", "default", "california_housing",
+    ]
     if "all" in [d.lower() for d in args.dataset]:
         dataset_keys = _CANONICAL_DATASETS
     else:
@@ -371,8 +403,13 @@ def run_experiments(args):
                 constraints_to_use = gt_constraints
             elif method_name == "PostHocRepair":
                 constraints_to_use = gt_constraints
+            elif method_name == "RelDDPM":
+                # Controllable baseline: same discovered constraint set as
+                # LLMSynth (information-matched). Privileged GT-oracle RelDDPM
+                # is ManualConstraints territory, not RelDDPM in this table.
+                constraints_to_use = discovered_constraints
             else:
-                # TabDDPM, CTGAN: no constraints
+                # TabDDPM, TabDiff, CTGAN: no constraints during generation
                 constraints_to_use = []
 
             for seed in range(args.seeds):
@@ -692,7 +729,8 @@ Examples:
     )
     parser.add_argument(
         "--dataset", nargs="+",
-        default=["adult", "credit", "heart", "diabetes", "wine"],
+        default=["adult", "credit", "heart", "diabetes", "wine",
+                 "bank", "default", "california_housing"],
         help=f"Dataset name(s) or 'all'. "
              f"Available: {list(_DATASET_LOADERS.keys())}",
     )

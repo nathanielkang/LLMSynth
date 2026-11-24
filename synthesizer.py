@@ -209,17 +209,16 @@ class TabularDiffusionCore(nn.Module):
 
         return x.numpy()
 
-    @torch.no_grad()
     def constrained_sample(self, n_samples,
                            range_constraints_scaled=None,
+                           soft_ranges_scaled=None,
+                           guidance_scale=0.5,
                            verbose=False):
-        """Constraint-guided DDPM reverse sampling (late-stage guidance).
+        """Reverse sampling with hard-range clamps at every step.
 
-        Applies value-range clamping only in the last T_g denoising
-        steps (default 200 of 1000), preserving the learned distribution
-        during early/mid denoising while steering toward constraint
-        satisfaction in the final steps.  This avoids compounding
-        distortion from clamping at every step.
+        Soft-range guidance is added only on the last T_g steps
+        (manuscript: T_g=200, s=0.5) as epsilon + s * grad C(x0_hat).
+        Hard ranges are projected at every step, not only in the suffix.
 
         Parameters
         ----------
@@ -235,49 +234,64 @@ class TabularDiffusionCore(nn.Module):
         self.eval()
         if range_constraints_scaled is None:
             range_constraints_scaled = []
+        if soft_ranges_scaled is None:
+            soft_ranges_scaled = []
 
-        # Late-stage guidance length T_g (manuscript: 200 of T=1000 steps).
         guidance_steps = 200
-
         x = torch.randn(n_samples, self.input_dim)
-
         timesteps = list(range(self.n_timesteps - 1, -1, -1))
         step_iter = tqdm(timesteps, desc="Guided sampling",
                          disable=not verbose, ascii=True)
 
         for t_val in step_iter:
             t = torch.full((n_samples,), t_val, dtype=torch.long)
-            predicted_noise = self.forward(x, t)
-
-            alpha = self.alphas[t_val]
+            with torch.no_grad():
+                predicted_noise = self.forward(x, t)
             alpha_b = self.alpha_bar[t_val]
+            if t_val < guidance_steps and soft_ranges_scaled:
+                predicted_noise = predicted_noise + guidance_scale * (
+                    self._soft_range_grad(x, predicted_noise, alpha_b,
+                                          soft_ranges_scaled)
+                )
+            alpha = self.alphas[t_val]
             beta = self.betas[t_val]
-
             coef1 = 1.0 / torch.sqrt(alpha)
             coef2 = beta / torch.sqrt(1.0 - alpha_b)
             mean = coef1 * (x - coef2 * predicted_noise)
-
             if t_val > 0:
                 noise = torch.randn_like(x)
-                sigma = torch.sqrt(beta)
-                x = mean + sigma * noise
+                x = mean + torch.sqrt(beta) * noise
             else:
                 x = mean
+            x = self._clamp_scaled(x, range_constraints_scaled)
 
-            # === CONSTRAINT GUIDANCE (late-stage only) ===
-            # Only apply clamping in the last `guidance_steps` timesteps.
-            # t counts down from 999 to 0, so t < guidance_steps means
-            # we are in the final steps of denoising.
-            if t_val < guidance_steps:
-                for col_idx, min_s, max_s in range_constraints_scaled:
-                    if min_s is not None:
-                        x[:, col_idx] = x[:, col_idx].clamp(
-                            min=float(min_s))
-                    if max_s is not None:
-                        x[:, col_idx] = x[:, col_idx].clamp(
-                            max=float(max_s))
+        return x.detach().numpy()
 
-        return x.numpy()
+    def _clamp_scaled(self, x, ranges):
+        for col_idx, min_s, max_s in ranges:
+            if min_s is not None:
+                x[:, col_idx] = x[:, col_idx].clamp(min=float(min_s))
+            if max_s is not None:
+                x[:, col_idx] = x[:, col_idx].clamp(max=float(max_s))
+        return x
+
+    def _soft_range_grad(self, x, predicted_noise, alpha_bar, soft_ranges):
+        """Gradient of the soft range penalty at the Tweedie estimate."""
+        work = x.detach().requires_grad_(True)
+        eps = predicted_noise.detach()
+        denom = torch.sqrt(alpha_bar).clamp(min=1e-8)
+        x0 = (work - torch.sqrt(1.0 - alpha_bar) * eps) / denom
+        cost = work.new_zeros(())
+        for col_idx, min_s, max_s in soft_ranges:
+            column = x0[:, col_idx]
+            if min_s is not None:
+                cost = cost + torch.relu(float(min_s) - column).pow(2).sum()
+            if max_s is not None:
+                cost = cost + torch.relu(column - float(max_s)).pow(2).sum()
+        if not cost.requires_grad or float(cost.detach()) == 0.0:
+            return torch.zeros_like(predicted_noise)
+        grad, = torch.autograd.grad(cost, work, retain_graph=False)
+        return grad.detach()
 
 
 # ===================================================================
@@ -351,12 +365,25 @@ class BaseSynthesizer:
                     df[col] = df[col].clip(0, n_classes - 1)
                     df[col] = le.inverse_transform(df[col])
 
-        # Round integer-like numeric columns
+        # Round integer-like numeric columns (incl. binary targets)
         for col in self._num_columns:
-            if col in df.columns:
-                # Check if original data was integer-like
-                if col in self._col_order:
-                    pass  # Keep as float for now
+            if col in df.columns and hasattr(self, "_train_df") and self._train_df is not None:
+                if col not in self._train_df.columns:
+                    continue
+                vals = pd.to_numeric(self._train_df[col], errors="coerce").dropna()
+                if len(vals) == 0:
+                    continue
+                if np.allclose(vals, np.round(vals)):
+                    df[col] = pd.to_numeric(df[col], errors="coerce").round()
+                    nunique = vals.nunique()
+                    if nunique <= 20:
+                        # Snap to observed integer levels when cardinality is small
+                        levels = np.sort(vals.unique())
+                        arr = df[col].fillna(levels[0]).values.astype(float)
+                        nearest = levels[
+                            np.abs(arr.reshape(-1, 1) - levels.reshape(1, -1)).argmin(axis=1)
+                        ]
+                        df[col] = nearest
 
         return df
 
@@ -447,7 +474,7 @@ class ConstraintGuidedDiffusion(BaseSynthesizer):
 
     def __init__(self, hidden_dim=512, n_layers=3, n_timesteps=1000,
                  epochs=200, batch_size=4096, lr=1e-3, verbose=True,
-                 max_rejection_retries=3):
+                 max_rejection_retries=25):
         super().__init__(name="LLMSynth")
         self.hidden_dim = hidden_dim
         self.n_layers = n_layers
@@ -494,23 +521,25 @@ class ConstraintGuidedDiffusion(BaseSynthesizer):
         if constraints is None:
             constraints = []
 
-        # Separate constraint types
-        range_constraints = [c for c in constraints
-                             if isinstance(c, ValueRangeConstraint)]
-        fd_constraints = [c for c in constraints
-                          if isinstance(c, FunctionalDependency)]
-        rule_constraints = [c for c in constraints
-                            if isinstance(c, CrossColumnRule)]
+        constraints = self._with_roles(constraints)
+        hard = [c for c in constraints if getattr(c, "role", "hard") == "hard"]
+        soft = [c for c in constraints if getattr(c, "role", "") == "soft"]
+        range_constraints = [c for c in hard if isinstance(c, ValueRangeConstraint)]
+        soft_ranges = [c for c in soft if isinstance(c, ValueRangeConstraint)]
+        fd_constraints = [c for c in hard if isinstance(c, FunctionalDependency)]
+        rule_constraints = [c for c in hard if isinstance(c, CrossColumnRule)]
+        self._last_range_constraints = range_constraints
+        self._last_fd_constraints = fd_constraints
+        self._hard_constraints = hard
 
-        # Convert range constraints to standardized (z-score) space
         self._scaled_ranges = self._constraints_to_scaled(range_constraints)
+        soft_scaled = self._constraints_to_scaled(soft_ranges)
 
-        # Step 1: LATE-STAGE guided reverse diffusion -- range constraints
-        # are enforced only in the last T_g denoising steps, preserving
-        # distribution quality while steering toward constraints.
         X_synth = self._model.constrained_sample(
             n_samples,
             range_constraints_scaled=self._scaled_ranges,
+            soft_ranges_scaled=soft_scaled,
+            guidance_scale=0.5,
             verbose=self.verbose,
         )
         df_synth = self._postprocess(X_synth)
@@ -526,7 +555,69 @@ class ConstraintGuidedDiffusion(BaseSynthesizer):
             df_synth, rule_constraints
         )
 
+        # Closure after FD lookup, then the ablation checkpoint, then the
+        # output gate. Completed-candidate violations are recorded before
+        # any discard. Emitted rows are those that pass every hard rule.
+        df_synth = self._enforce_value_ranges(df_synth, range_constraints)
+        df_synth = self._enforce_fds(df_synth, fd_constraints)
+        precheck = self._hard_violation_mask(df_synth, hard)
+        self.last_precheck_hard_rate = (
+            float(precheck.mean()) if len(df_synth) else 0.0
+        )
+        df_synth = self._release_hard_clean(df_synth, hard, n_samples)
         return df_synth
+
+    def _with_roles(self, constraints):
+        if constraints and all(hasattr(c, "role") for c in constraints):
+            return constraints
+        if self._train_df is None:
+            for constraint in constraints:
+                if not hasattr(constraint, "role"):
+                    constraint.role = "hard"
+            return constraints
+        from validation import validate_proposals
+        return validate_proposals(list(constraints), self._train_df)
+
+    def _hard_violation_mask(self, df, hard):
+        mask = pd.Series(False, index=df.index)
+        for constraint in hard:
+            if isinstance(constraint, DistributionHint):
+                continue
+            satisfied = constraint.check(df)
+            mask = mask | ~satisfied.reindex(df.index).fillna(False)
+        return mask
+
+    def _release_hard_clean(self, df, hard, n_samples):
+        """Redraw hard-violating rows, then drop any row that still fails."""
+        if not hard:
+            self.last_release_shortfall = 0
+            return df
+        for _retry in range(self.max_rejection_retries):
+            mask = self._hard_violation_mask(df, hard)
+            if not bool(mask.any()):
+                break
+            n_bad = int(mask.sum())
+            X_new = self._model.constrained_sample(
+                n_bad,
+                range_constraints_scaled=self._scaled_ranges,
+                soft_ranges_scaled=[],
+                verbose=False,
+            )
+            df_new = self._postprocess(X_new)
+            df_new = self._enforce_value_ranges(
+                df_new, self._last_range_constraints
+            )
+            df_new = self._enforce_fds(df_new, self._last_fd_constraints)
+            df.loc[df.index[mask]] = df_new.iloc[:n_bad].to_numpy()
+        mask = self._hard_violation_mask(df, hard)
+        clean = df.loc[~mask].copy()
+        self.last_release_shortfall = int(n_samples - len(clean))
+        if self.verbose and self.last_release_shortfall:
+            print(
+                "  [ConstraintGuided] discarded "
+                f"{int(mask.sum())} hard-violating rows"
+            )
+        return clean
 
     def _constraints_to_scaled(self, range_constraints):
         """Convert ValueRangeConstraints to standardized (z-score) space.
@@ -576,18 +667,17 @@ class ConstraintGuidedDiffusion(BaseSynthesizer):
 
     def _enforce_fds(self, df, constraints):
         """
-        Enforce functional dependencies using nearest valid value.
+        Enforce functional dependencies via deterministic modal lookup.
 
-        For each FD (det -> dep):
-          - Numeric dependent: pick the nearest valid value from training
-            data for the given determinant group (preserves information).
-          - Categorical dependent: use the mode (most common value).
+        For each FD (det -> dep), replace the dependent with the training-mode
+        value for that determinant (paper: modal FD projection). Unseen
+        determinants fall back to the global training mode.
         """
         if self._train_df is None:
             return df
 
         for c in constraints:
-            det_cols = c.determinant
+            det_cols = list(c.determinant)
             dep_col = c.dependent
 
             missing = [col for col in det_cols + [dep_col]
@@ -596,57 +686,44 @@ class ConstraintGuidedDiffusion(BaseSynthesizer):
             if missing:
                 continue
 
-            dep_is_numeric = dep_col in self._num_columns
+            train = self._train_df.copy()
+            for col in det_cols:
+                train[col] = train[col].astype(str).str.strip()
+            work = df.copy()
+            for col in det_cols:
+                work[col] = work[col].astype(str).str.strip()
 
-            if dep_is_numeric:
-                # Numeric: pick nearest valid value per determinant group
-                train_groups = self._train_df.groupby(
-                    det_cols, sort=False
-                )
-                valid_map = {}
-                for key, grp in train_groups:
-                    vals = grp[dep_col].dropna().values.astype(float)
-                    if len(vals) > 0:
-                        valid_map[key] = np.sort(vals)
+            mode_map = (
+                train.groupby(det_cols, sort=False)[dep_col]
+                .agg(lambda x: x.value_counts().index[0] if len(x) else np.nan)
+            )
+            global_mode = (
+                train[dep_col].value_counts().index[0]
+                if len(train) > 0 else np.nan
+            )
 
-                new_dep = df[dep_col].copy().astype(float)
-                for key, indices in df.groupby(det_cols).groups.items():
-                    if key not in valid_map:
-                        continue
-                    arr = valid_map[key]
-                    gen_vals = df.loc[indices, dep_col].values.astype(float)
-                    # Vectorized nearest-value lookup via searchsorted
-                    insert_pos = np.searchsorted(arr, gen_vals)
-                    insert_pos = np.clip(insert_pos, 0, len(arr) - 1)
-                    nearest = arr[insert_pos].copy()
-                    left_pos = np.clip(insert_pos - 1, 0, len(arr) - 1)
-                    left_vals = arr[left_pos]
-                    use_left = (np.abs(gen_vals - left_vals)
-                                < np.abs(gen_vals - nearest))
-                    nearest[use_left] = left_vals[use_left]
-                    new_dep.loc[indices] = nearest
-
-                df[dep_col] = new_dep
+            if len(det_cols) == 1:
+                mapped = work[det_cols[0]].map(mode_map)
             else:
-                # Categorical: use mode (most common value)
-                train_grouped = self._train_df.groupby(det_cols)[dep_col]
-                mode_map = train_grouped.agg(
-                    lambda x: x.value_counts().index[0]
-                    if len(x) > 0 else np.nan
+                keys = work[det_cols].apply(tuple, axis=1)
+                mapped = keys.map(
+                    mode_map.to_dict() if hasattr(mode_map, "to_dict")
+                    else dict(mode_map)
                 )
-                mapping_dict = (mode_map.to_dict()
-                               if hasattr(mode_map, 'to_dict')
-                               else dict(mode_map))
-                if len(det_cols) == 1:
-                    det_key = det_cols[0]
-                    mapped = df[det_key].map(mapping_dict)
-                else:
-                    key_tuples = df[det_cols].apply(tuple, axis=1)
-                    mapped = key_tuples.map(mapping_dict)
+            mapped = mapped.fillna(global_mode)
 
-                mask = mapped.notna()
-                if mask.any():
-                    df.loc[mask, dep_col] = mapped.loc[mask].values
+            # Integer-like numeric dependents: store as clean ints
+            if dep_col in self._num_columns:
+                train_vals = pd.to_numeric(train[dep_col], errors="coerce").dropna()
+                if len(train_vals) and np.allclose(train_vals, np.round(train_vals)):
+                    mapped = pd.to_numeric(mapped, errors="coerce").round()
+                    mapped = mapped.astype(int)
+
+            df[dep_col] = mapped.values
+            # Keep determinant string cleanup consistent with map keys
+            for col in det_cols:
+                if col in self._cat_columns:
+                    df[col] = work[col].values
 
         return df
 
@@ -692,6 +769,19 @@ class ConstraintGuidedDiffusion(BaseSynthesizer):
                 if i < len(df_new):
                     df.loc[idx] = df_new.iloc[i]
 
+            # Re-apply deterministic range/FD fixes after each resample batch
+            df = self._enforce_value_ranges(
+                df,
+                [c for c in getattr(self, "_last_range_constraints", [])],
+            )
+            df = self._enforce_fds(
+                df,
+                [c for c in getattr(self, "_last_fd_constraints", [])],
+            )
+
+        # Last-resort deterministic repair for residual cross-column violations
+        df = self._deterministic_cross_column_repair(df, constraints)
+
         if self.verbose:
             # Final violation count
             final_violations = 0
@@ -700,6 +790,43 @@ class ConstraintGuidedDiffusion(BaseSynthesizer):
             print(f"  [ConstraintGuided] After enforcement: "
                   f"{final_violations} total constraint violations remain")
 
+        return df
+
+    def _deterministic_cross_column_repair(self, df, constraints):
+        """
+        Repair remaining CrossColumnRule violations by copying a satisfying
+        training row's dependent column values when possible.
+        """
+        if self._train_df is None or not constraints:
+            return df
+
+        for c in constraints:
+            satisfied = c.check(df)
+            if satisfied.all():
+                continue
+            viol_idx = df.index[~satisfied]
+            cols = [col for col in c.columns if col in df.columns
+                    and col in self._train_df.columns]
+            if len(cols) < 2:
+                continue
+            # Prefer fixing the last column in the rule (typical consequent)
+            target_col = cols[-1]
+            train_ok = self._train_df.loc[c.check(self._train_df)]
+            if len(train_ok) == 0:
+                continue
+            for idx in viol_idx:
+                # Condition on other columns when possible
+                cond_cols = [col for col in cols if col != target_col]
+                row = df.loc[idx]
+                subset = train_ok
+                for col in cond_cols:
+                    matched = subset[
+                        subset[col].astype(str) == str(row[col])
+                    ]
+                    if len(matched) > 0:
+                        subset = matched
+                pick = subset.sample(1, random_state=0).iloc[0]
+                df.at[idx, target_col] = pick[target_col]
         return df
 
 
@@ -958,7 +1085,8 @@ def get_synthesizer(method_name, **kwargs):
     Parameters
     ----------
     method_name : str
-        One of: LLMSynth, TabDDPM, PostHocRepair, CTGAN, ManualConstraints
+        One of: LLMSynth, TabDDPM, RelDDPM, TabDiff, PostHocRepair, CTGAN,
+        ManualConstraints
     **kwargs
         Passed to synthesizer constructor.
 
@@ -966,9 +1094,14 @@ def get_synthesizer(method_name, **kwargs):
     -------
     BaseSynthesizer instance.
     """
+    from baselines.relddpm_adapter import RelDDPMSynthesizer
+    from baselines.tabdiff_adapter import TabDiffSynthesizer
+
     registry = {
         "llmsynth": ConstraintGuidedDiffusion,
         "tabddpm": VanillaTabDDPM,
+        "relddpm": RelDDPMSynthesizer,
+        "tabdiff": TabDiffSynthesizer,
         "posthocrepair": PostHocRepair,
         "ctgan": CTGANSynthesizer,
         "manualconstraints": ConstraintGuidedDiffusion,
